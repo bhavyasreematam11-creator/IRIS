@@ -1,0 +1,53 @@
+[
+  {
+    "id": "INC-2026-0041",
+    "title": "PostgreSQL Connection Pool Exhaustion in User Auth Service",
+    "category": "Database",
+    "severity": "Critical",
+    "affected_system": "PostgreSQL Cluster (pgpool-01)",
+    "description": "API Gateway began returning HTTP 500 Internal Server Errors on all /auth/login and /auth/refresh endpoints during peak morning traffic spike.",
+    "error_logs": "FATAL: remaining connection slots are reserved for non-replication superuser connections (SQLSTATE 53300)\norg.postgresql.util.PSQLException: FATAL: remaining connection slots are reserved for non-replication superuser connections\nat org.postgresql.core.v3.ConnectionFactoryImpl.doAuthentication\nat pg_pool_client.acquire(connection.js:142)\nTimeoutError: ResourceRequest timed out after 10000ms",
+    "status": "Resolved",
+    "root_cause": "Node.js auth service leaked database connections during token refresh retry bursts due to missing release() in an unhandled promise rejection branch. PostgreSQL max_connections (100) was saturated with 'idle in transaction' handles.",
+    "steps_taken": "1. Executed 'SELECT count(*), state, usename FROM pg_stat_activity GROUP BY state, usename;' revealing 97 idle in transaction connections from auth pods.\n2. Identified client IPs belonging to auth-service deployment replicas.\n3. Executed 'SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE state = 'idle in transaction' AND state_change < now() - INTERVAL '5 minutes';' to instantly restore DB availability.\n4. Audited auth-service Knex pool config and connection release logic.",
+    "resolution": "Configured PgBouncer transaction-level pooling with max_client_conn=1000 and default_pool_size=25. Capped microservice pool to max 10 connections with 5000ms idleTimeoutMillis, and released hotfix v2.4.1 fixing the dangling promise in token refresh.",
+    "retained_in_memory": true,
+    "is_sample": true,
+    "created_at": "2026-10-14T08:15:22Z",
+    "resolved_at": "2026-10-14T09:02:10Z"
+  },
+  {
+    "id": "INC-2026-0042",
+    "title": "Redis Out of Memory (OOM) Eviction Failure in Session Store",
+    "category": "Infrastructure",
+    "severity": "High",
+    "affected_system": "Redis Cluster (redis-session-prod)",
+    "description": "Users experienced unexpected logouts across the web dashboard. Writing new session keys failed across all web worker nodes.",
+    "error_logs": "Redis::CommandError: OOM command not allowed when used memory > 'maxmemory'.\nat SessionStore.set(session_store.rb:88)\nat ActionDispatch::Session::RedisStore#set_session\nUsed memory: 8.00GB / 8.00GB (100% capacity). Eviction policy: volatile-lru",
+    "status": "Resolved",
+    "root_cause": "Telemetry events were erroneously written to the session Redis instance without a TTL (Time-To-Live). Because eviction policy was volatile-lru, keys without expiry could not be evicted, choking all 8GB of memory.",
+    "steps_taken": "1. Inspected memory allocation using 'redis-cli --bigkeys' and 'redis-cli memory usage'.\n2. Discovered 1.8M unexpired keys matching pattern 'telemetry:event:*'.\n3. Executed non-blocking scan and unlink: 'redis-cli --scan --pattern 'telemetry:*' | xargs -L 500 redis-cli unlink'.\n4. Verified memory drop from 8.0GB to 1.8GB.",
+    "resolution": "Altered Redis maxmemory-policy to 'allkeys-lru' as a safeguard. Directed telemetry data exclusively to Kafka/ClickHouse and enforced strict 7-day TTL (EX 604800) in Redis helper.",
+    "retained_in_memory": true,
+    "is_sample": true,
+    "created_at": "2026-10-22T14:30:00Z",
+    "resolved_at": "2026-10-22T15:10:45Z"
+  },
+  {
+    "id": "INC-2026-0043",
+    "title": "Ingress TLS Certificate Expiration on Edge Gateway",
+    "category": "Security",
+    "severity": "Critical",
+    "affected_system": "Kubernetes Ingress (nginx-ingress-prod)",
+    "description": "Browser clients reported security warnings 'NET::ERR_CERT_DATE_INVALID' when connecting to public API endpoints.",
+    "error_logs": "nginx: [warn] certificate for api.example.com expired at 2026-10-15 00:00:00 GMT\ncurl: (60) SSL certificate problem: certificate has expired\nCert-Manager log: 'Failed to complete HTTP-01 challenge: 404 Not Found on /.well-known/acme-challenge/'",
+    "status": "Resolved",
+    "root_cause": "A recent ingress routing update redirected all non-API routes to an SPA single-page application router, which intercepted and broke Let's Encrypt ACME HTTP-01 challenge validation paths.",
+    "steps_taken": "1. Confirmed cert expiry using 'openssl s_client -connect api.example.com:443 -servername api.example.com'.\n2. Checked Cert-Manager CertificateRequest status: found failed HTTP01 challenge.\n3. Whitelisted /.well-known/acme-challenge/ path in Nginx ingress configuration.",
+    "resolution": "Switched Cert-Manager Issuer from HTTP-01 challenge to Route53 DNS-01 challenge to eliminate dependency on HTTP routing. Re-issued valid wildcard TLS certificate and set up 30-day proactive Slack alert.",
+    "retained_in_memory": true,
+    "is_sample": true,
+    "created_at": "2026-10-28T03:10:00Z",
+    "resolved_at": "2026-10-28T03:45:00Z"
+  }
+]

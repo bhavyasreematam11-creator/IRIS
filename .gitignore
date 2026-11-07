@@ -218,3 +218,17 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Local SQLite database files
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+iris.db
+.env
+.env.*
+!.env.example
+venv/
+.venv/
+__pycache__/
+*.pyc.vscode/
